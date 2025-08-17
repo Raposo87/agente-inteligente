@@ -1,7 +1,7 @@
 # app/routers/webhook_whatsapp.py
 from flask import Blueprint, request
 from ..services import whatsapp_meta as whatsapp
-from ..nlp.intent_extractor import extract
+#from ..nlp.intent_extractor import extract
 from ..db import SessionLocal
 from ..models import Company, Customer, Conversation, Message, Appointment, Reminder
 from ..config import Settings
@@ -68,15 +68,16 @@ def incoming():
                     db.add(Message(conversation_id=conv.id, role='user', text=body))
 
                     # NLU (podes trocar por lógica simples enquanto testas)
-                    nlu = extract(body)
-                    lang = nlu.get('language') or cust.locale or company.locale
-                    reply = ("Olá! Sou o assistente da "
-                             f"{company.name}. Posso ajudar com informações, marcações e pagamentos."
-                            ) if (lang or "").startswith('pt') else (
-                             f"Hi! I'm {company.name}'s assistant. I can help with info, bookings and payments."
-                            )
+                    #nlu = extract(body)
+                    #lang = nlu.get('language') or cust.locale or company.locale
+                    #reply = ("Olá! Sou o assistente da "
+                     #        f"{company.name}. Posso ajudar com informações, marcações e pagamentos."
+                      #      ) if (lang or "").startswith('pt') else (
+                       #      f"Hi! I'm {company.name}'s assistant. I can help with info, bookings and payments."
+                        #    )
+                    reply = f"Recebido: {body}"
 
-                    db.add(Message(conversation_id=conv.id, role='assistant', text=reply, payload={'nlu': nlu}))
+                    db.add(Message(conversation_id=conv.id, role='assistant', text=reply))
                     db.commit()
 
                     # Enviar pelo WhatsApp Cloud API

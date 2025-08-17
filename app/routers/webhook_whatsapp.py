@@ -1,4 +1,3 @@
-# app/routers/webhook_whatsapp.py
 from flask import Blueprint, request, abort
 from ..services import whatsapp_meta as whatsapp
 from ..nlp.intent_extractor import extract
@@ -11,7 +10,7 @@ import pytz, json
 
 bp = Blueprint('whatsapp', __name__)
 
-@bp.route('/webhooks/whatsapp', methods=['GET'])
+@bp.route('/webhook', methods=['GET'])
 def verify():
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
@@ -20,35 +19,27 @@ def verify():
         return challenge, 200
     return "Forbidden", 403
 
-def _get_company(db):
-    if Settings.EMPRESA_ID:
-        c = db.query(Company).get(int(Settings.EMPRESA_ID))
-        if c:
-            return c
-    return db.query(Company).first()
-
-@bp.route('/webhooks/whatsapp', methods=['POST'])
+@bp.route('/webhook', methods=['POST'])
 def incoming():
     data = request.json
     if not data or "entry" not in data:
         return "No data", 400
 
     db = SessionLocal()
-    company = _get_company(db)
+    company = db.query(Company).first()
 
     for entry in data["entry"]:
         for change in entry.get("changes", []):
             value = change.get("value", {})
             messages = value.get("messages", [])
             for msg in messages:
-                if msg.get("type") != "text":  # exemplo simples
+                if msg.get("type") != "text":
                     continue
                 from_phone = msg["from"]
                 body = msg["text"]["body"]
 
                 cust = db.query(Customer).filter_by(company_id=company.id, phone=from_phone).first()
                 if not cust:
-                    from ..models import Customer  # evita circular import em alguns setups
                     cust = Customer(company_id=company.id, phone=from_phone, locale=company.locale)
                     db.add(cust); db.commit(); db.refresh(cust)
 
@@ -62,10 +53,8 @@ def incoming():
                 nlu = extract(body)
                 lang = nlu.get('language') or cust.locale or company.locale
                 intent = nlu.get('intent')
-                ent = nlu.get('entities') or {}
 
-                # ... (lógica de estados igual à tua; no fim envia a resposta)
-                reply = "Olá! Posso ajudar com informações, marcações e pagamentos." if lang.startswith('pt') else "Hi! I can help with info, bookings and payments."
+                reply = "Olá! Posso ajudar com informações, agendamentos e pagamentos." if lang.startswith('pt') else "Hi! I can help with info, bookings and payments."
 
                 db.add(Message(conversation_id=conv.id, role='assistant', text=reply, payload={'nlu': nlu}))
                 db.commit()

@@ -1,5 +1,5 @@
 {
-  "greeting": "Olá! Sou o assistente virtual da {company}. Posso ajudar com informações, marcações e pagamentos.",
+  "greeting": "Olá! Sou o assistente virtual da {Yoga Kula}. Posso ajudar com informações, marcações e pagamentos.",
   "ask_datetime": "Claro! Para quando pretende agendar? Diga-me data e hora (ex.: 22/08 às 15:00).",
   "slot_taken": "Esse horário já está ocupado. Tem outra preferência?",
   "booked": "Marcado! {service} em {dt}. Vai receber um lembrete 24h antes.",

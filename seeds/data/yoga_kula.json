@@ -1,0 +1,116 @@
+{
+  "empresa_id": "yoga_kula",
+  "nome_estudio": "Yoga Kula",
+  "site_url": "https://yogakulastudio.pt/",
+  "descricao": "Estúdio de yoga em Lisboa focado no bem-estar e equilíbrio para todos os níveis.",
+  "localizacao": {
+    "endereco": "Rua Amélia Rey Colaço Nº14 Loja D, 1500-664 Lisboa",
+    "bairro": "Benfica",
+    "cidade": "Lisboa",
+    "pais": "Portugal"
+  },
+  "contato": {
+    "telefone": "+351 933782610",
+    "email": "geral.kulayogastudio@gmail.com"
+  },
+  "horario_funcionamento": {
+    "segunda": ["08:00", "21:00"],
+    "terca": ["08:00", "21:00"],
+    "quarta": ["08:00", "21:00"],
+    "quinta": ["08:00", "21:00"],
+    "sexta": ["08:00", "21:00"],
+    "sabado": ["09:00", "13:00"],
+    "domingo": "fechado"
+  },
+  "modalidades": [
+    {
+      "nome": "Hatha Yoga",
+      "nivel": "Iniciante e Intermédio",
+      "horarios": {
+        "segunda": ["12:30"],
+        "terca": ["12:30"],
+        "quinta": ["12:30"]
+      },
+      "descricao": "Posturas físicas com técnicas de respiração e concentração.",
+      "preco": 15.0
+    },
+    {
+      "nome": "Vinyasa Yoga",
+      "nivel": "Intermédio",
+      "horarios": {
+        "terca": ["18:15"],
+        "sexta": ["18:15"]
+      },
+      "descricao": "Prática dinâmica com fluxo contínuo de posturas.",
+      "preco": 15.0
+    },
+    {
+      "nome": "Yoga Dinâmico",
+      "nivel": "Variável",
+      "horarios": {
+        "segunda": ["07:30", "08:45", "18:15", "19:30"],
+        "terca": ["07:00", "08:15"],
+        "quarta": ["07:30", "08:45", "18:15", "19:30"],
+        "quinta": ["07:00", "08:15", "18:15", "19:30"],
+        "sexta": ["07:30", "08:45"],
+        "sabado": ["09:30", "11:00"]
+      },
+      "descricao": "Prática vigorosa com sequências desafiadoras.",
+      "preco": 15.0
+    }
+  ],
+  "precos": {
+    "avulsa": 15.0,
+    "pack_experiencia": {
+      "aulas": 3,
+      "duracao_dias": 15,
+      "preco": 35.0
+    },
+    "mensalidades": {
+      "kula": 75.0,
+      "samadhi": 60.0,
+      "sadhana": 45.0
+    }
+  },
+  "descontos": [
+    {
+      "nome": "moradores_benfica",
+      "descricao": "desconto especial para moradores do benfica: 10% de desconto nas mensalidades. basta apresentar comprovante de morada.",
+      "tipo": "mensalidade",
+      "valor_percentual": 10,
+      "condicao": "bairro == 'Benfica'"
+    },
+    {
+      "nome": "idosos_65+",
+      "descricao": "bem-estar para todas as idades! 10% de desconto para maiores de 65 anos.",
+      "tipo": "geral",
+      "valor_percentual": 10,
+      "condicao": "idade >= 65"
+    }
+  ],
+  "lotacao_por_aula": 15,
+  "faq": [
+    {
+      "pergunta": "Preciso levar algo para a aula?",
+      "resposta": "Não, nós fornecemos tapetes e materiais. Apenas traga roupas confortáveis."
+    },
+    {
+      "pergunta": "Aceitam cartão?",
+      "resposta": "Sim, aceitamos cartão de crédito, débito e pagamentos via Stripe."
+    },
+    {
+      "pergunta": "É necessário avaliação antes?",
+      "resposta": "Não é obrigatório, mas iniciantes devem chegar 10 min antes."
+    }
+  ],
+  "professoras": [
+    {
+      "nome": "Joana Chumbinho",
+      "especialidade": "Especialista nas práticas das modalidades oferecidas"
+    },
+    {
+      "nome": "Susy Santos",
+      "especialidade": "Especialista nas práticas das modalidades oferecidas"
+    }
+  ]
+}

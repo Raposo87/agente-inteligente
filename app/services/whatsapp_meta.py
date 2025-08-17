@@ -4,7 +4,7 @@ from ..config import Settings
 
 def _endpoint():
     # v19.0 ou superior se quiseres — mantém consistente com a tua app
-    return f"https://graph.facebook.com/v19.0/{Settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
+    return f"https://graph.facebook.com/v23.0/{Settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
 
 def send_msg(to_phone: str, body: str):
     headers = {

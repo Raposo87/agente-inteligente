@@ -1,4 +1,5 @@
-# app/config.py
+from dotenv import load_dotenv
+load_dotenv()
 import os, json
 from base64 import b64decode
 
@@ -8,7 +9,7 @@ class Settings:
     TIMEZONE = os.getenv('TIMEZONE', 'Europe/Lisbon')
 
     # Postgres (Railway dá DATABASE_URL)
-    DATABASE_URL = os.getenv('DATABASE_URL')
+    DATABASE_URL = os.getenv("DATABASE_PUBLIC_URL") or os.getenv("DATABASE_URL")
 
     # OpenAI
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')

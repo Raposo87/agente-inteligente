@@ -40,18 +40,31 @@ def incoming():
     db = SessionLocal()
     company = _get_company(db)
     if not company:
-        return {"error": "No company configured. Seed the database and set EMPRESA_ID."}, 503
+        # 200 para o Meta não re-tentar agressivamente
+        return {"error": "No company configured. Seed the database and set EMPRESA_ID."}, 200
 
     try:
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
-                for msg in value.get("messages", []):
+
+                # 1) IGNORAR STATUS UPDATES (delivered/sent/read) — só tratamos 'messages'
+                if value.get("statuses"):
+                    print("Ignoring statuses event", flush=True)
+                    continue
+
+                messages = value.get("messages", [])
+                if not messages:
+                    continue
+
+                for msg in messages:
+                    # Apenas texto por agora
                     if msg.get("type") != "text":
                         continue
 
+                    msg_id = msg.get("id")  # wamid...
                     from_phone = msg["from"]
-                    body = msg["text"]["body"]
+                    body = (msg.get("text") or {}).get("body", "")
 
                     # Upsert do cliente
                     cust = db.query(Customer).filter_by(company_id=company.id, phone=from_phone).first()
@@ -65,12 +78,28 @@ def incoming():
                         conv = Conversation(company_id=company.id, customer_id=cust.id, state='IDLE', context={})
                         db.add(conv); db.commit(); db.refresh(conv)
 
-                    # Guarda a msg do utilizador
-                    db.add(Message(conversation_id=conv.id, role='user', text=body))
+                    # 2) DEDUP POR WAMID (idempotência sem migrations)
+                    ctx = conv.context or {}
+                    last_wamid = ctx.get("last_wamid")
+                    if msg_id and last_wamid == msg_id:
+                        print(f"Duplicate wamid detected ({msg_id}) -> skipping reply", flush=True)
+                        continue
+                    if msg_id:
+                        ctx["last_wamid"] = msg_id
+                        conv.context = ctx
+                        db.commit()
+
+                    # Guarda a mensagem do utilizador (opcional: wamid no payload)
+                    db.add(Message(conversation_id=conv.id, role='user', text=body, payload={"wamid": msg_id} if msg_id else {}))
                     db.commit()
 
-                    # -------- NLU --------
-                    nlu = extract(body) or {}
+                    # -------- NLU (protegida) --------
+                    try:
+                        nlu = extract(body) or {}
+                    except Exception as nlu_err:
+                        print("NLU error:", repr(nlu_err), flush=True)
+                        nlu = {}
+
                     lang = nlu.get('language') or cust.locale or company.locale or "pt-PT"
                     intent = (nlu.get('intent') or "SMALL_TALK").upper()
                     entities = nlu.get('entities') or {}
@@ -81,7 +110,6 @@ def incoming():
                     pricing = brand.get("pricing") or getattr(company, "pricing", {}) or {}
                     bh = company.business_hours or getattr(company, "business_hours", {}) or {}
                     addr = company.address or getattr(company, "address", "") or ""
-
                     about = (
                         brand.get("about")
                         or getattr(company, "description", None)
@@ -105,63 +133,44 @@ def incoming():
                                 "• Adapts to all levels"
                             )
 
-                    # -------- Lógica por intent --------
                     lower = body.lower()
+                    reply = None
 
+                    # -------- Lógica por intent --------
                     if intent == "FAQ_INFO":
                         concept_like = any(k in lower for k in [
                             "o que é", "o que e", "o que faz", "benefício", "beneficio", "para que serve",
                             "como funciona", "what is", "benefit", "how does it work"
                         ])
                         if concept_like:
-                            if lang.startswith("pt"):
-                                reply = (
-                                    f"🧘 {company.name}\n"
-                                    f"{about}\n\n"
-                                    f"Benefícios:\n{benefits_text()}\n\n"
-                                    f"Queres que te recomende uma modalidade ideal para o teu nível/objetivo?"
-                                )
-                            else:
-                                reply = (
-                                    f"🧘 {company.name}\n"
-                                    f"{about}\n\n"
-                                    f"Benefits:\n{benefits_text()}\n\n"
-                                    f"Would you like me to suggest a class style for your level/goal?"
-                                )
+                            reply = (
+                                f"🧘 {company.name}\n{about}\n\nBenefícios:\n{benefits_text()}\n\n"
+                                f"Queres que te recomende uma modalidade ideal para o teu nível/objetivo?"
+                                if lang.startswith("pt") else
+                                f"🧘 {company.name}\n{about}\n\nBenefits:\n{benefits_text()}\n\n"
+                                f"Would you like me to suggest a class style for your level/goal?"
+                            )
                         else:
-                            # FAQ curta e prática (sem dicts Python)
-                            if lang.startswith("pt"):
-                                # tenta extrair horas “bonitas”
-                                seg_open = (bh.get('segunda') or ['08:00','21:00'])[0]
-                                sex_close = (bh.get('sexta') or ['08:00','21:00'])[1]
-                                sab = bh.get('sabado') or ['09:00','13:00']
-                                dom = bh.get('domingo') or 'fechado'
-                                dropin = pricing.get('avulsa', '15')
-
-                                reply = (
-                                    f"🧘 {company.name}\n"
-                                    f"Horário: seg–sex {seg_open}–{sex_close}, sáb {sab[0]}–{sab[1]}, dom {dom}\n"
-                                    f"Morada: {addr}\n"
-                                    f"Preços: aula avulsa {dropin}€; packs/mensais sob consulta\n"
-                                    f"Site: {site}"
-                                )
-                            else:
-                                seg_open = (bh.get('segunda') or ['08:00','21:00'])[0]
-                                sex_close = (bh.get('sexta') or ['08:00','21:00'])[1]
-                                sab = bh.get('sabado') or ['09:00','13:00']
-                                dom = bh.get('domingo') or 'closed'
-                                dropin = pricing.get('avulsa', '15')
-
-                                reply = (
-                                    f"🧘 {company.name}\n"
-                                    f"Hours: Mon–Fri {seg_open}–{sex_close}, Sat {sab[0]}–{sab[1]}, Sun {dom}\n"
-                                    f"Address: {addr}\n"
-                                    f"Prices: drop-in {dropin}€; packs/monthlies on request\n"
-                                    f"Site: {site}"
-                                )
+                            seg_open = (bh.get('segunda') or ['08:00','21:00'])[0]
+                            sex_close = (bh.get('sexta') or ['08:00','21:00'])[1]
+                            sab = bh.get('sabado') or ['09:00','13:00']
+                            dom = bh.get('domingo') or ('fechado' if lang.startswith("pt") else 'closed')
+                            dropin = pricing.get('avulsa', '15')
+                            reply = (
+                                f"🧘 {company.name}\n"
+                                f"Horário: seg–sex {seg_open}–{sex_close}, sáb {sab[0]}–{sab[1]}, dom {dom}\n"
+                                f"Morada: {addr}\n"
+                                f"Preços: aula avulsa {dropin}€; packs/mensais sob consulta\n"
+                                f"Site: {site}"
+                                if lang.startswith("pt") else
+                                f"🧘 {company.name}\n"
+                                f"Hours: Mon–Fri {seg_open}–{sex_close}, Sat {sab[0]}–{sab[1]}, Sun {dom}\n"
+                                f"Address: {addr}\n"
+                                f"Prices: drop-in {dropin}€; packs/monthlies on request\n"
+                                f"Site: {site}"
+                            )
 
                     elif intent == "SCHEDULE":
-                        # Mini-máquina de estados (pergunta serviço -> pergunta data/hora)
                         if conv.state != "ASK_SERVICE":
                             conv.state = "ASK_SERVICE"; db.commit()
                             services = getattr(company, "services", None) or brand.get("services", []) or []
@@ -196,18 +205,33 @@ def incoming():
                         reply = "Vou encaminhar para um atendente humano. Um momento, por favor." if lang.startswith("pt") else \
                                 "I'll hand you off to a human agent. One moment, please."
 
-                    else:  # SMALL_TALK / OTHER
-                        reply = (
-                            f"Olá! Sou o assistente da {company.name}. Posso ajudar com informações, marcações e pagamentos."
-                            if lang.startswith("pt") else
-                            f"Hi! I'm {company.name}'s assistant. I can help with info, bookings and payments."
-                        )
+                    else:
+                        # Saudação só no 1º contacto (ou se conversa ainda está IDLE)
+                        has_assistant_msg = db.query(Message).filter_by(conversation_id=conv.id, role='assistant').first() is not None
+                        if not has_assistant_msg or conv.state == 'IDLE':
+                            reply = (
+                                f"Olá! Sou o assistente da {company.name}. Posso ajudar com informações, marcações e pagamentos."
+                                if lang.startswith("pt") else
+                                f"Hi! I'm {company.name}'s assistant. I can help with info, bookings and payments."
+                            )
+                            conv.state = 'ACTIVE'; db.commit()
+                        else:
+                            # Sem conteúdo novo — não falar para evitar custos
+                            reply = None
 
-                    # Guarda resposta (com NLU)
-                    db.add(Message(conversation_id=conv.id, role='assistant', text=reply, payload={'nlu': nlu}))
+                    # Sem reply → não envia nada
+                    if not reply:
+                        continue
+
+                    # Guarda resposta (com NLU e wamid original)
+                    payload = {'nlu': nlu}
+                    if msg_id:
+                        payload['in_reply_to_wamid'] = msg_id
+
+                    db.add(Message(conversation_id=conv.id, role='assistant', text=reply, payload=payload))
                     db.commit()
 
-                    # Envia pelo WhatsApp (sem derrubar se falhar)
+                    # Envia WhatsApp (protegido)
                     try:
                         whatsapp.send_msg(from_phone, reply)
                     except Exception as send_err:
@@ -221,5 +245,4 @@ def incoming():
             db.commit()
         except:
             pass
-        # 200 para o Meta não re-tentar agressivamente enquanto debugamos
         return {"ok": False}, 200

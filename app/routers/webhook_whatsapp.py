@@ -136,7 +136,7 @@ def incoming():
                     lower = body.lower()
                     reply = None
 
-                    # -------- Lógica por intent --------
+                    # -------- Lógica por intent/estado --------
                     if intent == "FAQ_INFO":
                         concept_like = any(k in lower for k in [
                             "o que é", "o que e", "o que faz", "benefício", "beneficio", "para que serve",
@@ -170,8 +170,10 @@ def incoming():
                                 f"Site: {site}"
                             )
 
-                    elif intent == "SCHEDULE":
-                        if conv.state != "ASK_SERVICE":
+                    # >>>>>>>>>>>>>>>>>>>>  AJUSTE AQUI  <<<<<<<<<<<<<<<<<<<<<<<
+                    elif intent == "SCHEDULE" or conv.state in ["ASK_SERVICE", "ASK_DATETIME"]:
+                        if conv.state not in ["ASK_SERVICE", "ASK_DATETIME"]:
+                            # iniciar fluxo
                             conv.state = "ASK_SERVICE"; db.commit()
                             services = getattr(company, "services", None) or brand.get("services", []) or []
                             if services and isinstance(services, list):
@@ -184,7 +186,9 @@ def incoming():
                                 "Let's book it! Tell me which class/service you prefer.\n"
                                 f"Options: {names}"
                             )
+
                         elif conv.state == "ASK_SERVICE":
+                            # aceita QUALQUER input como serviço escolhido
                             ctx = conv.context or {}
                             ctx["service_raw"] = body
                             conv.context = ctx; conv.state = "ASK_DATETIME"; db.commit()
@@ -193,9 +197,16 @@ def incoming():
                                 if lang.startswith("pt")
                                 else "Great. What date and time do you prefer? (e.g., 22/08 at 10:00)"
                             )
-                        else:
-                            reply = "Para agendar, diz o serviço e a data/hora." if lang.startswith("pt") else \
-                                    "To book, please tell me the service and date/time."
+
+                        elif conv.state == "ASK_DATETIME":
+                            # (placeholder) aqui podemos tentar extrair data/hora do texto
+                            # e depois consultar o Google Calendar antes de confirmar
+                            reply = (
+                                "Ok, registado! Vou verificar disponibilidade e já confirmo."
+                                if lang.startswith("pt")
+                                else "Got it! I'll check availability and confirm shortly."
+                            )
+                    # >>>>>>>>>>>>>>>>>>>>  FIM DO AJUSTE  <<<<<<<<<<<<<<<<<<<<<<<
 
                     elif intent == "PAYMENT":
                         reply = "Claro! Diz qual serviço/produto e envio um link seguro de pagamento." if lang.startswith("pt") else \

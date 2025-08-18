@@ -1,14 +1,13 @@
 # app/routers/webhook_whatsapp.py
 from flask import Blueprint, request
 from ..services import whatsapp_meta as whatsapp
-from ..nlp.intent_extractor import extract          # <- NLU reativada (robusta)
+from ..nlp.intent_extractor import extract
 from ..db import SessionLocal
 from ..models import Company, Customer, Conversation, Message, Appointment, Reminder
 from ..config import Settings
 from ..services import gcal, stripe_svc
 from datetime import datetime, timedelta
-import pytz, json
-import traceback
+import pytz, json, traceback
 
 bp = Blueprint('whatsapp', __name__)
 
@@ -36,14 +35,11 @@ def verify():
 @bp.route('/webhook', methods=['POST'])
 def incoming():
     data = request.get_json(silent=True) or {}
-    # log simples para debug
     print("Webhook RECEIVED:", data, flush=True)
 
     db = SessionLocal()
-
     company = _get_company(db)
     if not company:
-        # Não há empresa na DB -> evita AttributeError e informa configuração
         return {"error": "No company configured. Seed the database and set EMPRESA_ID."}, 503
 
     try:
@@ -51,11 +47,10 @@ def incoming():
             for change in entry.get("changes", []):
                 value = change.get("value", {})
                 for msg in value.get("messages", []):
-                    # Apenas texto para começar
                     if msg.get("type") != "text":
                         continue
 
-                    from_phone = msg["from"]          # ex: 3519...
+                    from_phone = msg["from"]
                     body = msg["text"]["body"]
 
                     # Upsert do cliente
@@ -70,64 +65,137 @@ def incoming():
                         conv = Conversation(company_id=company.id, customer_id=cust.id, state='IDLE', context={})
                         db.add(conv); db.commit(); db.refresh(conv)
 
-                    # Guarda a mensagem do utilizador
+                    # Guarda a msg do utilizador
                     db.add(Message(conversation_id=conv.id, role='user', text=body))
                     db.commit()
 
-                    # -------- NLU ROBUSTA --------
-                    # (usa app/nlp/intent_extractor.py com fallback seguro)
+                    # -------- NLU --------
                     nlu = extract(body) or {}
                     lang = nlu.get('language') or cust.locale or company.locale or "pt-PT"
                     intent = (nlu.get('intent') or "SMALL_TALK").upper()
                     entities = nlu.get('entities') or {}
 
-                    # -------- RESPOSTA POR INTENT (BÁSICA) --------
-                    # Puxa dados úteis da empresa
+                    # -------- Dados da empresa --------
                     brand = company.brand_voice or {}
-                    site = brand.get("site_url", "")
-                    pricing = brand.get("pricing", {})
-                    bh = company.business_hours or {}
-                    addr = company.address or ""
+                    site = brand.get("site_url") or getattr(company, "site_url", "") or ""
+                    pricing = brand.get("pricing") or getattr(company, "pricing", {}) or {}
+                    bh = company.business_hours or getattr(company, "business_hours", {}) or {}
+                    addr = company.address or getattr(company, "address", "") or ""
+
+                    about = (
+                        brand.get("about")
+                        or getattr(company, "description", None)
+                        or getattr(company, "descricao", None)
+                        or "Estúdio de yoga focado no bem-estar e equilíbrio para todos os níveis."
+                    )
+
+                    def benefits_text():
+                        if lang.startswith("pt"):
+                            return (
+                                "• Melhora a mobilidade e força\n"
+                                "• Reduz stress e ansiedade\n"
+                                "• Aumenta foco e qualidade do sono\n"
+                                "• Adapta-se a vários níveis"
+                            )
+                        else:
+                            return (
+                                "• Improves mobility and strength\n"
+                                "• Reduces stress and anxiety\n"
+                                "• Boosts focus and sleep quality\n"
+                                "• Adapts to all levels"
+                            )
+
+                    # -------- Lógica por intent --------
+                    lower = body.lower()
 
                     if intent == "FAQ_INFO":
-                        # Resposta resumida de FAQ/Informações
-                        reply = (
-                            f"🧘 {company.name}\n"
-                            f"Horário: {bh}\n"
-                            f"Morada: {addr}\n"
-                            f"Preços: {pricing}\n"
-                            f"Site: {site}"
-                        )
-                    elif intent == "SCHEDULE":
-                        # Fluxo simples de marcação (perguntas guiadas)
-                        # Melhorar depois com parser de datas + Google Calendar
-                        if conv.state != "ASK_SERVICE":
-                            conv.state = "ASK_SERVICE"
-                            db.commit()
-                            # lista serviços registados
-                            services = company.services or []
-                            if services:
-                                names = ", ".join(s.get("name","") for s in services[:6])
+                        concept_like = any(k in lower for k in [
+                            "o que é", "o que e", "o que faz", "benefício", "beneficio", "para que serve",
+                            "como funciona", "what is", "benefit", "how does it work"
+                        ])
+                        if concept_like:
+                            if lang.startswith("pt"):
                                 reply = (
-                                    f"Vamos agendar! Diga qual serviço pretende.\n"
-                                    f"Opções: {names}"
+                                    f"🧘 {company.name}\n"
+                                    f"{about}\n\n"
+                                    f"Benefícios:\n{benefits_text()}\n\n"
+                                    f"Queres que te recomende uma modalidade ideal para o teu nível/objetivo?"
                                 )
                             else:
-                                reply = "Vamos agendar! Diga o nome do serviço pretendido."
+                                reply = (
+                                    f"🧘 {company.name}\n"
+                                    f"{about}\n\n"
+                                    f"Benefits:\n{benefits_text()}\n\n"
+                                    f"Would you like me to suggest a class style for your level/goal?"
+                                )
+                        else:
+                            # FAQ curta e prática (sem dicts Python)
+                            if lang.startswith("pt"):
+                                # tenta extrair horas “bonitas”
+                                seg_open = (bh.get('segunda') or ['08:00','21:00'])[0]
+                                sex_close = (bh.get('sexta') or ['08:00','21:00'])[1]
+                                sab = bh.get('sabado') or ['09:00','13:00']
+                                dom = bh.get('domingo') or 'fechado'
+                                dropin = pricing.get('avulsa', '15')
+
+                                reply = (
+                                    f"🧘 {company.name}\n"
+                                    f"Horário: seg–sex {seg_open}–{sex_close}, sáb {sab[0]}–{sab[1]}, dom {dom}\n"
+                                    f"Morada: {addr}\n"
+                                    f"Preços: aula avulsa {dropin}€; packs/mensais sob consulta\n"
+                                    f"Site: {site}"
+                                )
+                            else:
+                                seg_open = (bh.get('segunda') or ['08:00','21:00'])[0]
+                                sex_close = (bh.get('sexta') or ['08:00','21:00'])[1]
+                                sab = bh.get('sabado') or ['09:00','13:00']
+                                dom = bh.get('domingo') or 'closed'
+                                dropin = pricing.get('avulsa', '15')
+
+                                reply = (
+                                    f"🧘 {company.name}\n"
+                                    f"Hours: Mon–Fri {seg_open}–{sex_close}, Sat {sab[0]}–{sab[1]}, Sun {dom}\n"
+                                    f"Address: {addr}\n"
+                                    f"Prices: drop-in {dropin}€; packs/monthlies on request\n"
+                                    f"Site: {site}"
+                                )
+
+                    elif intent == "SCHEDULE":
+                        # Mini-máquina de estados (pergunta serviço -> pergunta data/hora)
+                        if conv.state != "ASK_SERVICE":
+                            conv.state = "ASK_SERVICE"; db.commit()
+                            services = getattr(company, "services", None) or brand.get("services", []) or []
+                            if services and isinstance(services, list):
+                                names = ", ".join(s.get("name") or s.get("nome","") for s in services[:6])
+                            else:
+                                names = "Hatha, Vinyasa, Yoga Dinâmico"
+                            reply = (
+                                "Vamos agendar! Diz qual modalidade/serviço preferes.\n"
+                                f"Opções: {names}" if lang.startswith("pt") else
+                                "Let's book it! Tell me which class/service you prefer.\n"
+                                f"Options: {names}"
+                            )
                         elif conv.state == "ASK_SERVICE":
-                            # guarda serviço no contexto e pergunta data/hora
                             ctx = conv.context or {}
                             ctx["service_raw"] = body
-                            conv.context = ctx
-                            conv.state = "ASK_DATETIME"
-                            db.commit()
-                            reply = "Perfeito. Qual a data e hora preferidas? (ex.: 22/08 às 10h)"
+                            conv.context = ctx; conv.state = "ASK_DATETIME"; db.commit()
+                            reply = (
+                                "Perfeito. Qual a data e hora preferidas? (ex.: 22/08 às 10h)"
+                                if lang.startswith("pt")
+                                else "Great. What date and time do you prefer? (e.g., 22/08 at 10:00)"
+                            )
                         else:
-                            reply = "Para agendar, diga o serviço e a data/hora preferidos."
+                            reply = "Para agendar, diz o serviço e a data/hora." if lang.startswith("pt") else \
+                                    "To book, please tell me the service and date/time."
+
                     elif intent == "PAYMENT":
-                        reply = "Claro! Diga qual serviço/produto pretende pagar e envio um link seguro para pagamento."
+                        reply = "Claro! Diz qual serviço/produto e envio um link seguro de pagamento." if lang.startswith("pt") else \
+                                "Sure! Tell me the service/product and I'll send a secure checkout link."
+
                     elif intent == "HUMAN_HANDOFF":
-                        reply = "Vou encaminhar para um atendente humano. Um momento, por favor."
+                        reply = "Vou encaminhar para um atendente humano. Um momento, por favor." if lang.startswith("pt") else \
+                                "I'll hand you off to a human agent. One moment, please."
+
                     else:  # SMALL_TALK / OTHER
                         reply = (
                             f"Olá! Sou o assistente da {company.name}. Posso ajudar com informações, marcações e pagamentos."
@@ -135,24 +203,23 @@ def incoming():
                             f"Hi! I'm {company.name}'s assistant. I can help with info, bookings and payments."
                         )
 
-                    # Guarda resposta do assistente (com NLU no payload)
+                    # Guarda resposta (com NLU)
                     db.add(Message(conversation_id=conv.id, role='assistant', text=reply, payload={'nlu': nlu}))
                     db.commit()
 
-                    # Enviar pelo WhatsApp Cloud API (sem derrubar o webhook em caso de erro)
+                    # Envia pelo WhatsApp (sem derrubar se falhar)
                     try:
                         whatsapp.send_msg(from_phone, reply)
                     except Exception as send_err:
                         print("WA SEND ERROR:", repr(send_err), flush=True)
-                        # não levantar exceção para não gerar retry agressivo do Meta
 
         return {"ok": True}, 200
 
     except Exception as e:
-        # Log detalhado para debug remoto, mas responde 200 para evitar retries agressivos
         print("Webhook ERROR:", repr(e), "\n", traceback.format_exc(), flush=True)
         try:
             db.commit()
         except:
             pass
+        # 200 para o Meta não re-tentar agressivamente enquanto debugamos
         return {"ok": False}, 200

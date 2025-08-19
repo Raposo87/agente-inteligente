@@ -9,9 +9,9 @@ from ..services import gcal, stripe_svc
 from datetime import datetime
 import unicodedata, re, traceback
 
+# LLM freeform responder + rate-limit
 from ..nlp.responder import generate_freeform_reply
 from ..utils.ratelimit import llm_allowed
-from ..config import Settings
 
 bp = Blueprint('whatsapp', __name__)
 
@@ -33,6 +33,7 @@ def _norm(s: str) -> str:
 
 def _detect_english(user_text: str) -> bool:
     t = (user_text or "").lower().strip()
+    # “ok” não força inglês
     if t in {"ok", "ok.", "okay", "okay."}:
         return False
     en_hits = any(w in t for w in ["book", "schedule", "class", "what", "when", "how", "price", "pay", "payment", "benefit", "hi", "hello"])
@@ -470,12 +471,49 @@ def incoming():
                         else:
                             reply = None
 
+                    # -------------------- BLOCO LLM FREEFORM (pedido) --------------------
+                    if not reply:
+                        # Se ainda não temos resposta estruturada, tentamos LLM livre.
+                        use_llm = (str(getattr(Settings, "USE_LLM_FREEFORM", "false")).lower() in ("true", "1", "yes"))
+                        if use_llm and llm_allowed(conv, cooldown_seconds=int(getattr(Settings, "LLM_COOLDOWN_SECONDS", 25))):
+                            try:
+                                # resumo simples (opcional)
+                                summary = ""
+                                # idioma por heurística (PT por defeito)
+                                locale = "en" if _detect_english(body) else "pt-PT"
+                                # dicionário leve da empresa
+                                company_dict = {
+                                    "name": company.name,
+                                    "brand_voice": company.brand_voice or {},
+                                    "description": getattr(company, "description", None),
+                                    "descricao": getattr(company, "descricao", None),
+                                    "site_url": getattr(company, "site_url", None),
+                                    "address": getattr(company, "address", None),
+                                    "business_hours": getattr(company, "business_hours", None),
+                                    "services": getattr(company, "services", None) or (company.brand_voice or {}).get("services", []),
+                                }
+                                reply = generate_freeform_reply(
+                                    company=company_dict,
+                                    conversation_summary=summary,
+                                    user_text=body,
+                                    locale=locale,
+                                    temperature=float(getattr(Settings, "OPENAI_TEMPERATURE", 0.4)),
+                                    max_tokens=int(getattr(Settings, "OPENAI_MAX_TOKENS", 400)),
+                                )
+                            except Exception as gen_err:
+                                print("LLM freeform error:", repr(gen_err), flush=True)
+                                # Fallback curto
+                                reply = "Posso ajudar com isso! Queres que confirme essa informação ou preferes seguir com uma marcação/pagamento?"
+
+                    # Se mesmo assim não houver reply, não envia nada
                     if not reply:
                         continue
 
+                    # Guarda resposta + payload NLU
                     db.add(Message(conversation_id=conv.id, role='assistant', text=reply, payload={'nlu': nlu}))
                     db.commit()
 
+                    # Envia WhatsApp
                     try:
                         whatsapp.send_msg(from_phone, reply)
                     except Exception as send_err:

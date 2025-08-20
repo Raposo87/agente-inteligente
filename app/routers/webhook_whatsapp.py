@@ -176,6 +176,21 @@ def _mentions_trial(text):
     t = _norm(text)
     return any(k in t for k in ["aula experimental", "aula de experiencia", "aula de experiência", "trial", "first class", "teste"])
 
+# ---- NOVOS helpers: detectar pedido de modalidades e listar nomes ----
+def _asks_modalities(text: str) -> bool:
+    t = _norm(text)
+    keys = [
+        "quais modalidades", "modalidades", "que modalidades", "quais aulas", "tipos de aula",
+        "servicos", "serviços", "classes", "class types", "what classes", "which classes"
+    ]
+    return any(k in t for k in keys)
+
+def _list_service_names(services) -> str:
+    if not services:
+        return "Hatha Yoga, Vinyasa Yoga, Yoga Dinâmico"
+    names = [s.get("name") or s.get("nome") for s in services if (s.get("name") or s.get("nome"))]
+    return ", ".join(names) if names else "Hatha Yoga, Vinyasa Yoga, Yoga Dinâmico"
+
 # -------------------- Rotas --------------------
 
 @bp.route('/webhook', methods=['GET'])
@@ -289,50 +304,60 @@ def incoming():
 
                     # -------- INTENT FAQ_INFO (conceito) --------
                     if intent == "FAQ_INFO":
-                        concept_like = any(k in lower for k in [
-                            "o que e", "o que faz", "beneficio", "para que serve", "como funciona",
-                            "what is", "benefit", "how does it work"
-                        ])
-                        if concept_like:
-                            if lang.startswith("pt"):
-                                reply = (
-                                    f"🧘 {company.name}\n{about}\n\n"
-                                    "Benefícios:\n"
-                                    "• Melhora a mobilidade e força\n"
-                                    "• Reduz stress e ansiedade\n"
-                                    "• Aumenta foco e qualidade do sono\n"
-                                    "• Adapta-se a vários níveis\n\n"
-                                    "Queres que te recomende uma modalidade ideal para o teu nível/objetivo?"
-                                )
-                            else:
-                                reply = (
-                                    f"🧘 {company.name}\n{about}\n\n"
-                                    "Benefits:\n"
-                                    "• Improves mobility and strength\n"
-                                    "• Reduces stress and anxiety\n"
-                                    "• Boosts focus and sleep quality\n"
-                                    "• Adapts to all levels\n\n"
-                                    "Would you like me to suggest a class style for your level/goal?"
-                                )
-                        else:
-                            seg_open = (bh.get('segunda') or ['08:00','21:00'])[0]
-                            sex_close = (bh.get('sexta') or ['08:00','21:00'])[1]
-                            sab = bh.get('sabado') or ['09:00','13:00']
-                            dom = bh.get('domingo') or ('fechado' if lang.startswith("pt") else 'closed')
-                            dropin = pricing.get('avulsa', '15')
+                        # NOVO: se perguntou explicitamente pelas modalidades, responde com a lista
+                        if _asks_modalities(body):
+                            names = _list_service_names(services)
                             reply = (
-                                f"🧘 {company.name}\n"
-                                f"Horário: seg–sex {seg_open}–{sex_close}, sáb {sab[0]}–{sab[1]}, dom {dom}\n"
-                                f"Morada: {addr}\n"
-                                f"Preços: aula avulsa {dropin}€; packs/mensais sob consulta\n"
-                                f"Site: {site}"
+                                f"Temos estas modalidades: {names}.\nQueres que eu explique rapidamente as diferenças?"
                                 if lang.startswith("pt") else
-                                f"🧘 {company.name}\n"
-                                f"Hours: Mon–Fri {seg_open}–{sex_close}, Sat {sab[0]}–{sab[1]}, Sun {dom}\n"
-                                f"Address: {addr}\n"
-                                f"Prices: drop-in {dropin}€; packs/monthlies on request\n"
-                                f"Site: {site}"
+                                f"We offer: {names}.\nWould you like a quick overview of each?"
                             )
+
+                        if not reply:
+                            concept_like = any(k in lower for k in [
+                                "o que e", "o que faz", "beneficio", "para que serve", "como funciona",
+                                "what is", "benefit", "how does it work"
+                            ])
+                            if concept_like:
+                                if lang.startswith("pt"):
+                                    reply = (
+                                        f"🧘 {company.name}\n{about}\n\n"
+                                        "Benefícios:\n"
+                                        "• Melhora a mobilidade e força\n"
+                                        "• Reduz stress e ansiedade\n"
+                                        "• Aumenta foco e qualidade do sono\n"
+                                        "• Adapta-se a vários níveis\n\n"
+                                        "Queres que te recomende uma modalidade ideal para o teu nível/objetivo?"
+                                    )
+                                else:
+                                    reply = (
+                                        f"🧘 {company.name}\n{about}\n\n"
+                                        "Benefits:\n"
+                                        "• Improves mobility and strength\n"
+                                        "• Reduces stress and anxiety\n"
+                                        "• Boosts focus and sleep quality\n"
+                                        "• Adapts to all levels\n\n"
+                                        "Would you like me to suggest a class style for your level/goal?"
+                                    )
+                            else:
+                                seg_open = (bh.get('segunda') or ['08:00','21:00'])[0]
+                                sex_close = (bh.get('sexta') or ['08:00','21:00'])[1]
+                                sab = bh.get('sabado') or ['09:00','13:00']
+                                dom = bh.get('domingo') or ('fechado' if lang.startswith("pt") else 'closed')
+                                dropin = pricing.get('avulsa', '15')
+                                reply = (
+                                    f"🧘 {company.name}\n"
+                                    f"Horário: seg–sex {seg_open}–{sex_close}, sáb {sab[0]}–{sab[1]}, dom {dom}\n"
+                                    f"Morada: {addr}\n"
+                                    f"Preços: aula avulsa {dropin}€; packs/mensais sob consulta\n"
+                                    f"Site: {site}"
+                                    if lang.startswith("pt") else
+                                    f"🧘 {company.name}\n"
+                                    f"Hours: Mon–Fri {seg_open}–{sex_close}, Sat {sab[0]}–{sab[1]}, Sun {dom}\n"
+                                    f"Address: {addr}\n"
+                                    f"Prices: drop-in {dropin}€; packs/monthlies on request\n"
+                                    f"Site: {site}"
+                                )
 
                     # -------- FLUXO DE AGENDAMENTO --------
                     elif intent == "SCHEDULE" or conv.state in ["ASK_SERVICE", "ASK_DATETIME", "ASK_SLOT"]:
@@ -454,10 +479,64 @@ def incoming():
                             reply = "Recebido! Para confirmar preciso do pagamento. Preferes aula avulsa ou pack experiência?" if lang.startswith("pt") else \
                                     "Got it! To confirm I need payment. Do you prefer a drop-in or a trial pack?"
 
-                    # -------- INTENT PAYMENT fora do fluxo --------
+                    # -------- INTENT PAYMENT (agora com detecção de modalidade) --------
                     elif intent == "PAYMENT":
-                        reply = "Diz qual serviço/modalidade e eu envio um link de pagamento seguro." if lang.startswith("pt") else \
-                                "Tell me the service/style and I’ll send a secure payment link."
+                        sel = _find_service(services, body)
+                        service_name = (sel.get("name") or sel.get("nome")) if sel else None
+
+                        if not service_name:
+                            reply = "Diz qual modalidade/serviço e eu envio um link de pagamento seguro." if lang.startswith("pt") else \
+                                    "Tell me the class/service and I’ll send a secure payment link."
+                        else:
+                            amount_eur = None
+                            # tenta preço específico por serviço (se existir no JSON)
+                            svc_prices = (brand.get("pricing") or {}).get("services") or []
+                            for sp in svc_prices:
+                                n = sp.get("name") or sp.get("nome")
+                                if n and _norm(n) == _norm(service_name):
+                                    try:
+                                        amount_eur = float(sp.get("price"))
+                                    except Exception:
+                                        pass
+                                    break
+                            # fallback para avulsa
+                            if amount_eur is None:
+                                amount_eur = float(pricing.get("avulsa", 15.0))
+
+                            meta = {
+                                "service_name": service_name,
+                                "customer_phone": from_phone,
+                                "company_id": str(company.id),
+                                "payment_kind": "PAYMENT_ONLY"
+                            }
+                            try:
+                                checkout = stripe_svc.create_checkout_session(
+                                    amount_eur=amount_eur,
+                                    currency="eur",
+                                    success_url=Settings.STRIPE_SUCCESS_URL,
+                                    cancel_url=Settings.STRIPE_CANCEL_URL,
+                                    customer_phone=from_phone,
+                                    description=f"{company.name} - {service_name}",
+                                    metadata=meta
+                                )
+                                pay_url = checkout["url"] if isinstance(checkout, dict) else checkout
+                                reply = (
+                                    f"Aqui está o link de pagamento para {service_name} ({amount_eur:.2f}€):\n{pay_url}\n\n"
+                                    "Assim que confirmar, envio os próximos passos."
+                                    if lang.startswith("pt") else
+                                    f"Here is your secure payment link for {service_name} ({amount_eur:.2f}€):\n{pay_url}\n\n"
+                                    "Once confirmed, I'll share the next steps."
+                                )
+                                conv.state = "PAY_WAIT"
+                                ctx = conv.context or {}
+                                ctx["service_name"] = service_name
+                                conv.context = ctx
+                                db.commit()
+
+                            except Exception as e_stripe:
+                                print("STRIPE error:", repr(e_stripe), flush=True)
+                                reply = "Não consegui gerar o pagamento agora. Tenta de novo ou fala com um atendente." if lang.startswith("pt") else \
+                                        "I couldn't create the payment link now. Please try again or talk to a human agent."
 
                     else:
                         has_assistant_msg = db.query(Message).filter_by(conversation_id=conv.id, role='assistant').first() is not None
@@ -471,17 +550,13 @@ def incoming():
                         else:
                             reply = None
 
-                    # -------------------- BLOCO LLM FREEFORM (pedido) --------------------
+                    # -------------------- BLOCO LLM FREEFORM --------------------
                     if not reply:
-                        # Se ainda não temos resposta estruturada, tentamos LLM livre.
                         use_llm = (str(getattr(Settings, "USE_LLM_FREEFORM", "false")).lower() in ("true", "1", "yes"))
                         if use_llm and llm_allowed(conv, cooldown_seconds=int(getattr(Settings, "LLM_COOLDOWN_SECONDS", 25))):
                             try:
-                                # resumo simples (opcional)
                                 summary = ""
-                                # idioma por heurística (PT por defeito)
                                 locale = "en" if _detect_english(body) else "pt-PT"
-                                # dicionário leve da empresa
                                 company_dict = {
                                     "name": company.name,
                                     "brand_voice": company.brand_voice or {},
@@ -502,7 +577,6 @@ def incoming():
                                 )
                             except Exception as gen_err:
                                 print("LLM freeform error:", repr(gen_err), flush=True)
-                                # Fallback curto
                                 reply = "Posso ajudar com isso! Queres que confirme essa informação ou preferes seguir com uma marcação/pagamento?"
 
                     # Se mesmo assim não houver reply, não envia nada

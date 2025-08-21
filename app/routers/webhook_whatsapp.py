@@ -176,7 +176,7 @@ def _mentions_trial(text):
     t = _norm(text)
     return any(k in t for k in ["aula experimental", "aula de experiencia", "aula de experiência", "trial", "first class", "teste"])
 
-# ---- NOVOS helpers: detectar pedido de modalidades e listar nomes ----
+# ---- NOVOS helpers: detectar pedido de modalidades/aulas e listar nomes ----
 def _asks_modalities(text: str) -> bool:
     t = _norm(text)
     keys = [
@@ -185,11 +185,25 @@ def _asks_modalities(text: str) -> bool:
     ]
     return any(k in t for k in keys)
 
+def _asks_classes_or_offerings(text: str) -> bool:
+    t = _norm(text)
+    keys = [
+        "aulas", "aula", "modalidades", "tipos de aula", "oferece", "oferecer", "oferta",
+        "o que tem", "o que há", "o que ha", "what do you offer", "classes", "class types", "what classes"
+    ]
+    return any(k in t for k in keys)
+
 def _list_service_names(services) -> str:
     if not services:
         return "Hatha Yoga, Vinyasa Yoga, Yoga Dinâmico"
     names = [s.get("name") or s.get("nome") for s in services if (s.get("name") or s.get("nome"))]
     return ", ".join(names) if names else "Hatha Yoga, Vinyasa Yoga, Yoga Dinâmico"
+
+def _list_service_names_with_bullets(services) -> str:
+    if not services:
+        return "• Hatha Yoga\n• Vinyasa Yoga\n• Yoga Dinâmico"
+    names = [s.get("name") or s.get("nome") for s in services if (s.get("name") or s.get("nome"))]
+    return "\n".join(f"• {n}" for n in names) if names else "• Hatha Yoga\n• Vinyasa Yoga\n• Yoga Dinâmico"
 
 # -------------------- Rotas --------------------
 
@@ -302,15 +316,16 @@ def incoming():
                     reply = None
                     lower = _norm(body)
 
-                    # -------- INTENT FAQ_INFO (conceito) --------
+                    # -------- INTENT FAQ_INFO (conceito / oferta) --------
                     if intent == "FAQ_INFO":
-                        # NOVO: se perguntou explicitamente pelas modalidades, responde com a lista
-                        if _asks_modalities(body):
-                            names = _list_service_names(services)
+                        # NOVO: perguntas sobre oferta/aulas/modalidades -> lista + overview
+                        if _asks_classes_or_offerings(body) or _asks_modalities(body):
+                            names_bulleted = _list_service_names_with_bullets(services)
+                            overview = _modalities_overview(services, lang_pt=lang.startswith("pt"))
                             reply = (
-                                f"Temos estas modalidades: {names}.\nQueres que eu explique rapidamente as diferenças?"
+                                f"Temos estas modalidades:\n{names_bulleted}\n\n{overview}"
                                 if lang.startswith("pt") else
-                                f"We offer: {names}.\nWould you like a quick overview of each?"
+                                f"We offer:\n{names_bulleted}\n\n{_modalities_overview(services, lang_pt=False)}"
                             )
 
                         if not reply:
@@ -479,7 +494,7 @@ def incoming():
                             reply = "Recebido! Para confirmar preciso do pagamento. Preferes aula avulsa ou pack experiência?" if lang.startswith("pt") else \
                                     "Got it! To confirm I need payment. Do you prefer a drop-in or a trial pack?"
 
-                    # -------- INTENT PAYMENT (agora com detecção de modalidade) --------
+                    # -------- INTENT PAYMENT (detecção de modalidade) --------
                     elif intent == "PAYMENT":
                         sel = _find_service(services, body)
                         service_name = (sel.get("name") or sel.get("nome")) if sel else None
@@ -539,16 +554,26 @@ def incoming():
                                         "I couldn't create the payment link now. Please try again or talk to a human agent."
 
                     else:
-                        has_assistant_msg = db.query(Message).filter_by(conversation_id=conv.id, role='assistant').first() is not None
-                        if not has_assistant_msg or conv.state == 'IDLE':
+                        # NOVO: se mencionar aulas/oferta aqui, empurra para agendamento com opções
+                        if _asks_classes_or_offerings(body) or _asks_modalities(body):
+                            conv.state = "ASK_SERVICE"; db.commit()
+                            names = _list_service_names(services)
                             reply = (
-                                f"Vamos agendar! Diz qual modalidade/serviço preferes.\nOpções: Hatha Yoga, Vinyasa Yoga, Yoga Dinâmico"
-                                if ("marcar" in lower or "agendar" in lower or "aula" in lower) else
-                                f"Olá! Sou o assistente da {company.name}. Posso ajudar com informações, marcações e pagamentos."
+                                f"Vamos agendar! Diz qual modalidade preferes.\nOpções: {names}"
+                                if lang.startswith("pt") else
+                                f"Let's book it! Which class do you prefer?\nOptions: {names}"
                             )
-                            conv.state = 'ACTIVE'; db.commit()
                         else:
-                            reply = None
+                            has_assistant_msg = db.query(Message).filter_by(conversation_id=conv.id, role='assistant').first() is not None
+                            if not has_assistant_msg or conv.state == 'IDLE':
+                                reply = (
+                                    f"Vamos agendar! Diz qual modalidade/serviço preferes.\nOpções: Hatha Yoga, Vinyasa Yoga, Yoga Dinâmico"
+                                    if ("marcar" in lower or "agendar" in lower or "aula" in lower) else
+                                    f"Olá! Sou o assistente da {company.name}. Posso ajudar com informações, marcações e pagamentos."
+                                )
+                                conv.state = 'ACTIVE'; db.commit()
+                            else:
+                                reply = None
 
                     # -------------------- BLOCO LLM FREEFORM --------------------
                     if not reply:

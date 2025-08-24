@@ -1,24 +1,19 @@
 # app/nlp/openai_client.py
-import httpx
 from openai import OpenAI
 from ..config import Settings
 
-# httpx.Client sem proxies (evita erro "proxies" nas versões novas)
-_http_client = httpx.Client(timeout=30.0)
+# Usa a SDK nova da OpenAI (>=1.x)
+# NADA de 'proxies' no __init__, para evitar o erro que viste.
+client = OpenAI(api_key=Settings.OPENAI_API_KEY)
 
-client = OpenAI(
-    api_key=Settings.OPENAI_API_KEY,
-    http_client=_http_client
-)
-
-def chat(messages, model=None, **kwargs):
+def chat(messages, model=None, temperature=0.2, max_tokens=400):
     """
-    Wrapper para chat.completions.create (OpenAI SDK >= 1.x).
+    messages: [{"role":"system"/"user"/"assistant", "content":"..."}]
     """
-    model = model or (Settings.OPENAI_MODEL or "gpt-4o-mini")
-    temperature = kwargs.get("temperature", 0)
+    mdl = model or (Settings.OPENAI_MODEL or "gpt-4o-mini")  # escolhe o teu default
     return client.chat.completions.create(
-        model=model,
+        model=mdl,
         messages=messages,
-        temperature=temperature,
+        temperature=float(temperature),
+        max_tokens=int(max_tokens),
     )
